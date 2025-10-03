@@ -1,0 +1,12 @@
+# Ignore frontend build and dependencies
+frontend/
+frontend/dist/
+frontend/node_modules/
+frontend/package-lock.json
+
+# Ignore other deps
+node_modules/
+
+# Ignore logs and env
+.env
+*.log
