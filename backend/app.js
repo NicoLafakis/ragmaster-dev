@@ -80,6 +80,39 @@ const fileQueue = [];
 let isProcessing = false;
 let processingCancelled = false;
 
+// Lightweight ETA estimator: keep recent completed samples (chars, ms)
+const recentSamples = [];
+const MAX_ESTIMATOR_SAMPLES = 50;
+const DEFAULT_MS_PER_CHAR = 0.5; // default fallback ms per character
+
+function addSample(chars, ms) {
+  try {
+    recentSamples.push({ chars: Math.max(1, chars), ms: Math.max(1, ms) });
+    if (recentSamples.length > MAX_ESTIMATOR_SAMPLES) recentSamples.shift();
+  } catch (e) {
+    // noop
+  }
+}
+
+function getAvgMsPerChar() {
+  if (recentSamples.length === 0) return DEFAULT_MS_PER_CHAR;
+  let totalMs = 0;
+  let totalChars = 0;
+  for (const s of recentSamples) {
+    totalMs += s.ms;
+    totalChars += s.chars;
+  }
+  if (totalChars === 0) return DEFAULT_MS_PER_CHAR;
+  return totalMs / totalChars;
+}
+
+function estimateMsForLength(chars) {
+  const avg = getAvgMsPerChar();
+  const estimate = Math.round(avg * Math.max(1, chars));
+  // Minimal floor so tiny files still get a reasonable estimate
+  return Math.max(200, estimate);
+}
+
 /**
  * File queue item structure
  */
@@ -97,6 +130,7 @@ const createQueueItem = (file, content) => ({
   error: null,
   metrics: {
     chunkCount: 0,
+    processedChunks: 0,
     keywordCount: 0,
     processingTimeMs: 0,
     conversionApplied: false,
@@ -520,6 +554,8 @@ const processSingleFile = async (queueItem) => {
     console.log(`\n📄 Starting to process: ${queueItem.filename}`);
     queueItem.status = "processing";
     queueItem.startedAt = new Date().toISOString();
+    // reset processed chunks counter
+    queueItem.metrics.processedChunks = 0;
 
     let content = queueItem.content;
     let conversionApplied = false;
@@ -548,6 +584,15 @@ const processSingleFile = async (queueItem) => {
     console.log(`   Doc ID: ${docId}`);
     console.log(`   Content length: ${content.length} characters`);
 
+    // Estimate total processing time for this file (ms) using estimator
+    try {
+      queueItem.metrics.estimatedTotalMs = estimateMsForLength(content.length);
+      queueItem.metrics.estimatedStart = Date.now();
+    } catch (e) {
+      // ignore estimator errors
+      queueItem.metrics.estimatedTotalMs = null;
+    }
+
     const result = await processDocumentWithLLM(
       content,
       docId,
@@ -564,10 +609,18 @@ const processSingleFile = async (queueItem) => {
     queueItem.completedAt = new Date().toISOString();
     queueItem.metrics = {
       chunkCount: result.chunks?.length || 0,
+      processedChunks: result.chunks?.length || 0,
       keywordCount: queueItem.keywords.length,
       processingTimeMs: Date.now() - startTime,
       conversionApplied,
     };
+
+    // Record sample for estimator
+    try {
+      addSample(content.length, queueItem.metrics.processingTimeMs);
+    } catch (e) {
+      // noop
+    }
 
     console.log(
       `✅ Completed ${queueItem.filename} - ${queueItem.chunks.length} chunks in ${queueItem.metrics.processingTimeMs}ms\n`
@@ -846,12 +899,60 @@ app.get("/api/queue", (req, res) => {
       filename: f.filename,
       status: f.status,
       originalSize: f.originalSize,
-      metrics: f.metrics,
+      // Include estimator-derived fields alongside metrics
+      metrics: Object.assign(
+        {},
+        f.metrics,
+        (() => {
+          try {
+            const out = {};
+            if (
+              f.metrics &&
+              f.metrics.estimatedTotalMs &&
+              f.metrics.estimatedStart
+            ) {
+              const elapsed = Date.now() - f.metrics.estimatedStart;
+              const remaining = Math.max(
+                0,
+                f.metrics.estimatedTotalMs - elapsed
+              );
+              out.estimatedRemainingMs = remaining;
+              out.estimatedPercent = Math.min(
+                100,
+                Math.round((elapsed / f.metrics.estimatedTotalMs) * 100)
+              );
+              out.estimatedCompletionTime = new Date(
+                Date.now() + remaining
+              ).toISOString();
+            }
+            return out;
+          } catch (e) {
+            return {};
+          }
+        })()
+      ),
       error: f.error,
       uploadedAt: f.uploadedAt,
       completedAt: f.completedAt,
     })),
   });
+});
+
+/**
+ * Debug: expose estimator data
+ */
+app.get("/api/debug/estimator", (req, res) => {
+  try {
+    const avg = getAvgMsPerChar();
+    res.json({
+      sampleCount: recentSamples.length,
+      avgMsPerChar: avg,
+      defaultMsPerChar: DEFAULT_MS_PER_CHAR,
+      samples: recentSamples.slice(-50),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 /**

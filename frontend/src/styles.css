@@ -21,7 +21,9 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.6;
@@ -30,15 +32,23 @@ body {
 }
 
 body::before {
-  content: '';
+  content: "";
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background: 
-    radial-gradient(circle at 20% 50%, rgba(0, 217, 255, 0.05) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(255, 107, 53, 0.05) 0%, transparent 50%);
+  background:
+    radial-gradient(
+      circle at 20% 50%,
+      rgba(0, 217, 255, 0.05) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+    circle at 80% 80%,
+    rgba(255, 107, 53, 0.05) 0%,
+    transparent 50%
+  );
   pointer-events: none;
   z-index: 0;
 }
@@ -89,8 +99,12 @@ body::before {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 
 .logo h1 {
@@ -138,13 +152,18 @@ body::before {
 }
 
 .card::before {
-  content: '';
+  content: "";
   position: absolute;
   top: -1px;
   left: -1px;
   right: -1px;
   bottom: -1px;
-  background: linear-gradient(135deg, var(--accent-cyan) 0%, transparent 50%, var(--accent-orange) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--accent-cyan) 0%,
+    transparent 50%,
+    var(--accent-orange) 100%
+  );
   border-radius: 4px;
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -186,13 +205,18 @@ body::before {
 }
 
 .dropzone::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(0, 217, 255, 0.1), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 217, 255, 0.1),
+    transparent
+  );
   transition: left 0.5s ease;
 }
 
@@ -228,8 +252,12 @@ body::before {
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 .dropzone h3 {
@@ -285,7 +313,7 @@ body::before {
   border-left: 3px solid var(--accent-cyan);
   font-size: 0.875rem;
   color: var(--text-secondary);
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   border-radius: 2px;
 }
 
@@ -294,8 +322,12 @@ body::before {
 }
 
 @keyframes statusPulse {
-  0%, 100% { border-left-color: var(--accent-cyan); }
-  50% { border-left-color: var(--accent-orange); }
+  0%, 100% {
+    border-left-color: var(--accent-cyan);
+  }
+  50% {
+    border-left-color: var(--accent-orange);
+  }
 }
 
 /* Metadata Grid */
@@ -362,7 +394,11 @@ body::before {
 .btn-primary,
 .btn-search {
   padding: 0.875rem 2rem;
-  background: linear-gradient(135deg, var(--accent-cyan), var(--border-secondary));
+  background: linear-gradient(
+    135deg,
+    var(--accent-cyan),
+    var(--border-secondary)
+  );
   border: 1px solid var(--accent-cyan);
   color: var(--bg-primary);
   font-weight: 600;
@@ -487,7 +523,7 @@ body::before {
 .chunk-score {
   font-size: 0.75rem;
   color: var(--text-muted);
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .chunk-section {
@@ -589,7 +625,7 @@ body::before {
 .result-score {
   font-size: 0.75rem;
   color: var(--text-muted);
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .result-text {
@@ -613,7 +649,7 @@ body::before {
   left: 0;
   width: 100%;
   height: 100%;
-  background-image: 
+  background-image:
     linear-gradient(rgba(0, 217, 255, 0.1) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 217, 255, 0.1) 1px, transparent 1px);
   background-size: 50px 50px;
@@ -622,8 +658,12 @@ body::before {
 }
 
 @keyframes gridScroll {
-  0% { transform: translateX(0) translateY(0); }
-  100% { transform: translateX(50px) translateY(50px); }
+  0% {
+    transform: translateX(0) translateY(0);
+  }
+  100% {
+    transform: translateX(50px) translateY(50px);
+  }
 }
 
 /* Empty States */
@@ -639,19 +679,19 @@ body::before {
   .container {
     padding: 1rem;
   }
-  
+
   .card {
     padding: 1.5rem;
   }
-  
+
   .metadata-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .search-form {
     flex-direction: column;
   }
-  
+
   .btn-search {
     width: 100%;
   }
@@ -712,6 +752,18 @@ body::before {
   box-shadow: var(--glow-cyan);
 }
 
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.eta-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 0.5rem;
+}
+
 .chunk-stats {
   font-size: 0.75rem;
   color: var(--text-muted);
@@ -724,6 +776,58 @@ body::before {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid rgba(0, 217, 255, 0.1);
+}
+
+/* Progress bar */
+.progress-box {
+  position: relative;
+  height: 36px;
+  display: flex;
+  align-items: center;
+}
+.progress-bar {
+  height: 10px;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-orange));
+  border-radius: 6px;
+  width: 0%;
+  transition: width 400ms ease;
+  flex: 1;
+}
+.progress-bar.indeterminate {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+.progress-bar.indeterminate::after {
+  content: "";
+  position: absolute;
+  left: -40%;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 217, 255, 0.2),
+    transparent
+  );
+  animation: indeterminate 1.2s linear infinite;
+}
+.progress-label {
+  margin-left: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  min-width: 64px;
+  text-align: right;
+}
+
+@keyframes indeterminate {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 120%;
+  }
 }
 
 .error-box {
@@ -766,7 +870,7 @@ body::before {
 .file-size {
   color: var(--text-muted);
   font-size: 0.75rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 /* Stats Grid */
@@ -917,24 +1021,24 @@ body::before {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-  
+
   .table-container {
     font-size: 0.75rem;
   }
-  
+
   .results-table th,
   .results-table td {
     padding: 0.75rem 0.5rem;
   }
-  
+
   .filename-cell {
     max-width: 150px;
   }
-  
+
   .button-group {
     flex-direction: column;
   }
-  
+
   .button-group > button {
     width: 100%;
   }

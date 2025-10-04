@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import './styles.css';
+import React, { useState, useRef, useEffect } from "react";
+import "./styles.css";
 
 const App = () => {
   const [files, setFiles] = useState([]);
@@ -12,11 +12,11 @@ const App = () => {
   // Poll queue status
   const pollQueueStatus = async () => {
     try {
-      const res = await fetch('/api/queue');
+      const res = await fetch("/api/queue");
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setQueueData(data);
-      
+
       // Stop polling if not processing
       if (!data.stats.isProcessing && data.stats.processing === 0) {
         setIsProcessing(false);
@@ -26,7 +26,7 @@ const App = () => {
         }
       }
     } catch (err) {
-      console.error('Poll error:', err);
+      console.error("Poll error:", err);
     }
   };
 
@@ -64,12 +64,12 @@ const App = () => {
     setIsDragging(false);
 
     const droppedFiles = Array.from(e.dataTransfer.files);
-    setFiles(prev => [...prev, ...droppedFiles]);
+    setFiles((prev) => [...prev, ...droppedFiles]);
   };
 
   const handleFileSelect = (e) => {
     const selectedFiles = Array.from(e.target.files);
-    setFiles(prev => [...prev, ...selectedFiles]);
+    setFiles((prev) => [...prev, ...selectedFiles]);
   };
 
   const handleUpload = async () => {
@@ -77,61 +77,77 @@ const App = () => {
 
     setError(null);
     const formData = new FormData();
-    files.forEach(file => formData.append('files', file));
+    files.forEach((file) => formData.append("files", file));
 
     try {
-      console.log('🚀 Uploading files:', files.map(f => f.name));
-      
-      const res = await fetch('/api/upload', {
-        method: 'POST',
+      console.log(
+        "🚀 Uploading files:",
+        files.map((f) => f.name)
+      );
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
         body: formData,
       });
 
-      console.log('📡 Response status:', res.status, res.statusText);
-      
+      console.log("📡 Response status:", res.status, res.statusText);
+
       // Safely parse JSON (backend should always send JSON, but protect against HTML error pages)
       const safeParse = async (r) => {
         const text = await r.text();
-        console.log('📄 Response body:', text.slice(0, 500));
-        try { return JSON.parse(text); } catch { return { _raw: text }; }
+        console.log("📄 Response body:", text.slice(0, 500));
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { _raw: text };
+        }
       };
 
       const data = await safeParse(res);
 
       if (!res.ok) {
-        const errorMsg = data?.error || 'Upload failed';
-        const details = data?.details || data?._raw?.slice(0, 200) || 'No additional details';
+        const errorMsg = data?.error || "Upload failed";
+        const details =
+          data?.details || data?._raw?.slice(0, 200) || "No additional details";
         const fullError = `${errorMsg}\n\nDetails: ${details}\n\nStatus: ${res.status} ${res.statusText}\n\nURL: ${res.url}`;
-        
-        console.error('❌ Upload failed:', fullError);
+
+        console.error("❌ Upload failed:", fullError);
         throw new Error(fullError);
       }
 
-      console.log('✅ Upload successful:', data);
-      
+      console.log("✅ Upload successful:", data);
+
       if (data.errors) {
-        setError(`Some files skipped: ${data.errors.join(', ')}`);
+        setError(`Some files skipped: ${data.errors.join(", ")}`);
       }
-      
+
       setFiles([]);
       await pollQueueStatus();
+      // Start polling so frontend picks up auto-start processing
+      startPolling();
     } catch (err) {
-      console.error('❌ Upload error:', err);
+      console.error("❌ Upload error:", err);
       setError(err.message);
     }
-  };  const handleProcessQueue = async () => {
+  };
+  const handleProcessQueue = async () => {
     setError(null);
     setIsProcessing(true);
 
     try {
-      const res = await fetch('/api/process-queue', {
-        method: 'POST',
+      const res = await fetch("/api/process-queue", {
+        method: "POST",
       });
-        const text = await res.text();
-        let data; try { data = JSON.parse(text); } catch { data = { _raw: text }; }
-        if (!res.ok) {
-          throw new Error(data?.error || 'Failed to start queue');
-        }
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { _raw: text };
+      }
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to start queue");
+      }
 
       startPolling();
     } catch (err) {
@@ -142,18 +158,18 @@ const App = () => {
 
   const handleCancelQueue = async () => {
     try {
-      await fetch('/api/cancel-queue', { method: 'POST' });
-      setError('Processing cancelled');
+      await fetch("/api/cancel-queue", { method: "POST" });
+      setError("Processing cancelled");
     } catch (err) {
-      console.error('Cancel error:', err);
+      console.error("Cancel error:", err);
     }
   };
 
   const handleClearQueue = async () => {
-    if (!confirm('Clear all files from queue?')) return;
+    if (!confirm("Clear all files from queue?")) return;
 
     try {
-      await fetch('/api/clear-queue', { method: 'POST' });
+      await fetch("/api/clear-queue", { method: "POST" });
       setQueueData(null);
       setFiles([]);
       setError(null);
@@ -164,12 +180,17 @@ const App = () => {
 
   const handleRemoveFile = async (fileId) => {
     try {
-      const res = await fetch(`/api/queue/${fileId}`, { method: 'DELETE' });
-        const text = await res.text();
-        let data; try { data = JSON.parse(text); } catch { data = { _raw: text }; }
-        if (!res.ok) {
-          throw new Error(data?.error || 'Failed to remove file');
-        }
+      const res = await fetch(`/api/queue/${fileId}`, { method: "DELETE" });
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { _raw: text };
+      }
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to remove file");
+      }
       await pollQueueStatus();
     } catch (err) {
       setError(err.message);
@@ -178,6 +199,25 @@ const App = () => {
 
   const handleDownload = (fileId) => {
     window.location.href = `/api/download/${fileId}`;
+  };
+
+  const handleDownloadAll = () => {
+    if (!queueData) return;
+    const completed = queueData.files.filter((f) => f.status === "completed");
+    if (completed.length === 0) {
+      alert("No completed files to download");
+      return;
+    }
+
+    // Trigger downloads for each completed file
+    completed.forEach((file) => {
+      const a = document.createElement("a");
+      a.href = `/api/download/${file.id}`;
+      a.download = `${file.filename}.chunks.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
   };
 
   const formatSize = (bytes) => {
@@ -194,32 +234,44 @@ const App = () => {
 
   const getStatusEmoji = (status) => {
     switch (status) {
-      case 'pending': return '⏳';
-      case 'processing': return '⚡';
-      case 'completed': return '✅';
-      case 'failed': return '❌';
-      default: return '❓';
+      case "pending":
+        return "⏳";
+      case "processing":
+        return "⚡";
+      case "completed":
+        return "✅";
+      case "failed":
+        return "❌";
+      default:
+        return "❓";
     }
   };
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'pending': return '#fbbf24';
-      case 'processing': return '#3b82f6';
-      case 'completed': return '#10b981';
-      case 'failed': return '#ef4444';
-      default: return '#6b7280';
+      case "pending":
+        return "#fbbf24";
+      case "processing":
+        return "#3b82f6";
+      case "completed":
+        return "#10b981";
+      case "failed":
+        return "#ef4444";
+      default:
+        return "#6b7280";
     }
   };
 
   return (
     <div className="app">
       <div className="scanline"></div>
-      
+
       <header className="header">
         <div className="logo">
           <span className="logo-icon">⚡</span>
-          <h1>RAG<span className="accent">MASTER</span></h1>
+          <h1>
+            RAG<span className="accent">MASTER</span>
+          </h1>
         </div>
         <p className="tagline">Queue-Based LLM Document Chunking</p>
       </header>
@@ -227,25 +279,35 @@ const App = () => {
       <div className="container">
         {/* Upload Section */}
         <div className="card">
-          <h2><span className="section-icon">📤</span> Upload Files</h2>
-          
-          <div 
-            className={`dropzone ${files.length > 0 ? 'has-file' : ''} ${isDragging ? 'dragging' : ''}`}
-            onClick={() => document.getElementById('fileInput').click()}
+          <h2>
+            <span className="section-icon">📤</span> Upload Files
+          </h2>
+
+          <div
+            className={`dropzone ${files.length > 0 ? "has-file" : ""} ${
+              isDragging ? "dragging" : ""
+            }`}
+            onClick={() => document.getElementById("fileInput").click()}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
             <div className="dropzone-icon">📁</div>
-            <h3>{files.length > 0 ? `${files.length} files selected` : 'Drop files here or click to browse'}</h3>
-            <p className="dropzone-hint">Up to 50 files • Max 1MB per file • Total 10MB • No images</p>
+            <h3>
+              {files.length > 0
+                ? `${files.length} files selected`
+                : "Drop files here or click to browse"}
+            </h3>
+            <p className="dropzone-hint">
+              Up to 50 files • Max 1MB per file • Total 10MB • No images
+            </p>
             <input
               id="fileInput"
               type="file"
               accept=".md,.markdown,.txt,.json,.csv,.log,.xml,.html,.rtf"
               onChange={handleFileSelect}
               multiple
-              style={{ display: 'none' }}
+              style={{ display: "none" }}
             />
           </div>
 
@@ -275,27 +337,37 @@ const App = () => {
         {/* Queue Status */}
         {queueData && queueData.stats.totalFiles > 0 && (
           <div className="card">
-            <h2><span className="section-icon">📊</span> Queue Status</h2>
-            
+            <h2>
+              <span className="section-icon">📊</span> Queue Status
+            </h2>
+
             <div className="stats-grid">
               <div className="stat-box">
                 <div className="stat-value">{queueData.stats.totalFiles}</div>
                 <div className="stat-label">Total Files</div>
               </div>
               <div className="stat-box">
-                <div className="stat-value" style={{ color: '#fbbf24' }}>{queueData.stats.pending}</div>
+                <div className="stat-value" style={{ color: "#fbbf24" }}>
+                  {queueData.stats.pending}
+                </div>
                 <div className="stat-label">Pending</div>
               </div>
               <div className="stat-box">
-                <div className="stat-value" style={{ color: '#3b82f6' }}>{queueData.stats.processing}</div>
+                <div className="stat-value" style={{ color: "#3b82f6" }}>
+                  {queueData.stats.processing}
+                </div>
                 <div className="stat-label">Processing</div>
               </div>
               <div className="stat-box">
-                <div className="stat-value" style={{ color: '#10b981' }}>{queueData.stats.completed}</div>
+                <div className="stat-value" style={{ color: "#10b981" }}>
+                  {queueData.stats.completed}
+                </div>
                 <div className="stat-label">Completed</div>
               </div>
               <div className="stat-box">
-                <div className="stat-value" style={{ color: '#ef4444' }}>{queueData.stats.failed}</div>
+                <div className="stat-value" style={{ color: "#ef4444" }}>
+                  {queueData.stats.failed}
+                </div>
                 <div className="stat-label">Failed</div>
               </div>
             </div>
@@ -306,17 +378,17 @@ const App = () => {
                   🚀 Process Queue ({queueData.stats.pending} files)
                 </button>
               )}
-              
+
               {isProcessing && (
                 <button className="btn-danger" onClick={handleCancelQueue}>
                   ❌ Cancel Processing
                 </button>
               )}
-              
+
               <button className="btn-secondary" onClick={pollQueueStatus}>
                 🔄 Refresh
               </button>
-              
+
               <button className="btn-secondary" onClick={handleClearQueue}>
                 🗑️ Clear All
               </button>
@@ -327,13 +399,37 @@ const App = () => {
         {/* Results Table */}
         {queueData && queueData.files.length > 0 && (
           <div className="card">
-            <h2><span className="section-icon">📋</span> Processing Results</h2>
-            
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <h2>
+                <span className="section-icon">📋</span> Processing Results
+              </h2>
+              <div>
+                <button
+                  className="btn-secondary"
+                  onClick={handleDownloadAll}
+                  disabled={
+                    !(queueData.files || []).some(
+                      (f) => f.status === "completed"
+                    )
+                  }
+                >
+                  ⬇️ Download All
+                </button>
+              </div>
+            </div>
+
             <div className="table-container">
               <table className="results-table">
                 <thead>
                   <tr>
                     <th>Status</th>
+                    <th>Progress</th>
                     <th>Filename</th>
                     <th>Size</th>
                     <th>Chunks</th>
@@ -346,37 +442,92 @@ const App = () => {
                   {queueData.files.map((file) => (
                     <tr key={file.id}>
                       <td>
-                        <span 
+                        <span
                           className="status-badge"
-                          style={{ backgroundColor: getStatusColor(file.status) }}
+                          style={{
+                            backgroundColor: getStatusColor(file.status),
+                          }}
                         >
                           {getStatusEmoji(file.status)} {file.status}
                         </span>
                       </td>
+                      <td style={{ minWidth: 160 }}>
+                        {/* Compute progress: completed => 100, pending => 0, processing => use metrics if available */}
+                        {file.status === "completed" ? (
+                          <div className="progress-box" title={`100%`}>
+                            <div
+                              className="progress-bar"
+                              style={{ width: "100%" }}
+                            ></div>
+                            <div className="progress-label">100%</div>
+                          </div>
+                        ) : file.status === "pending" ? (
+                          <div className="progress-box" title={`Pending`}>
+                            <div className="progress-bar indeterminate"></div>
+                            <div className="progress-label">Pending</div>
+                          </div>
+                        ) : (
+                          <div className="progress-box" title={`Processing`}>
+                            {/* If estimator fields exist, show estimated percent and ETA */}
+                            {file.metrics && file.metrics.estimatedPercent ? (
+                              <>
+                                <div
+                                  className="progress-bar"
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      file.metrics.estimatedPercent
+                                    )}%`,
+                                  }}
+                                ></div>
+                                <div className="progress-label">
+                                  {file.metrics.estimatedPercent}%
+                                  {file.metrics.estimatedRemainingMs
+                                    ? ` • ≈ ${formatTime(
+                                        file.metrics.estimatedRemainingMs
+                                      )}`
+                                    : null}
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="progress-bar indeterminate"></div>
+                                <div className="progress-label">Processing</div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className="filename-cell">{file.filename}</td>
                       <td>{formatSize(file.originalSize)}</td>
-                      <td>{file.metrics.chunkCount || '-'}</td>
-                      <td>{file.metrics.keywordCount || '-'}</td>
-                      <td>{file.metrics.processingTimeMs ? formatTime(file.metrics.processingTimeMs) : '-'}</td>
+                      <td>{file.metrics.chunkCount || "-"}</td>
+                      <td>{file.metrics.keywordCount || "-"}</td>
                       <td>
-                        {file.status === 'completed' && (
-                          <button 
+                        {file.metrics.processingTimeMs
+                          ? formatTime(file.metrics.processingTimeMs)
+                          : "-"}
+                      </td>
+                      <td>
+                        {file.status === "completed" && (
+                          <button
                             className="btn-download"
                             onClick={() => handleDownload(file.id)}
                           >
                             ⬇️ Download
                           </button>
                         )}
-                        {file.status === 'pending' && (
-                          <button 
+                        {file.status === "pending" && (
+                          <button
                             className="btn-remove"
                             onClick={() => handleRemoveFile(file.id)}
                           >
                             🗑️
                           </button>
                         )}
-                        {file.status === 'failed' && (
-                          <span className="error-text" title={file.error}>⚠️</span>
+                        {file.status === "failed" && (
+                          <span className="error-text" title={file.error}>
+                            ⚠️
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -390,7 +541,14 @@ const App = () => {
         {/* Errors */}
         {error && (
           <div className="error-box">
-            <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontFamily: 'monospace', fontSize: '12px' }}>
+            <pre
+              style={{
+                whiteSpace: "pre-wrap",
+                margin: 0,
+                fontFamily: "monospace",
+                fontSize: "12px",
+              }}
+            >
               ❌ {error}
             </pre>
           </div>
