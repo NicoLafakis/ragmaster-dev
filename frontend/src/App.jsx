@@ -429,7 +429,6 @@ const App = () => {
                 <thead>
                   <tr>
                     <th>Status</th>
-                    <th>Progress</th>
                     <th>Filename</th>
                     <th>Size</th>
                     <th>Chunks</th>
@@ -450,53 +449,6 @@ const App = () => {
                         >
                           {getStatusEmoji(file.status)} {file.status}
                         </span>
-                      </td>
-                      <td style={{ minWidth: 160 }}>
-                        {/* Compute progress: completed => 100, pending => 0, processing => use metrics if available */}
-                        {file.status === "completed" ? (
-                          <div className="progress-box" title={`100%`}>
-                            <div
-                              className="progress-bar"
-                              style={{ width: "100%" }}
-                            ></div>
-                            <div className="progress-label">100%</div>
-                          </div>
-                        ) : file.status === "pending" ? (
-                          <div className="progress-box" title={`Pending`}>
-                            <div className="progress-bar indeterminate"></div>
-                            <div className="progress-label">Pending</div>
-                          </div>
-                        ) : (
-                          <div className="progress-box" title={`Processing`}>
-                            {/* If estimator fields exist, show estimated percent and ETA */}
-                            {file.metrics && file.metrics.estimatedPercent ? (
-                              <>
-                                <div
-                                  className="progress-bar"
-                                  style={{
-                                    width: `${Math.min(
-                                      100,
-                                      file.metrics.estimatedPercent
-                                    )}%`,
-                                  }}
-                                ></div>
-                                <div className="progress-label">
-                                  {file.metrics.estimatedPercent}%
-                                  {file.metrics.estimatedRemainingMs
-                                    ? ` • ≈ ${formatTime(
-                                        file.metrics.estimatedRemainingMs
-                                      )}`
-                                    : null}
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="progress-bar indeterminate"></div>
-                                <div className="progress-label">Processing</div>
-                              </>
-                            )}
-                          </div>
-                        )}
                       </td>
                       <td className="filename-cell">{file.filename}</td>
                       <td>{formatSize(file.originalSize)}</td>
