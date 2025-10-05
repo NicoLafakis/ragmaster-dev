@@ -19,7 +19,8 @@ const app = express();
 const MAX_FILES = 50;
 const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILE_SIZE = 1 * 1024 * 1024; // 1MB per file
-const PROCESSING_DELAY = 4000; // 4 seconds between files
+const PROCESSING_DELAY = 500; // 0.5 seconds between batches (was 4000)
+const CONCURRENT_FILES = 5; // Process 5 files simultaneously for maximum speed
 const ALLOWED_EXTENSIONS = [
   ".md",
   ".markdown",
@@ -583,7 +584,7 @@ const processSingleFile = async (queueItem) => {
 };
 
 /**
- * Process queue sequentially with delays
+ * Process queue with CONCURRENT batch processing for MAXIMUM SPEED 🚀
  * CRITICAL: Use atomic check-and-set pattern to prevent race conditions
  */
 const processQueue = async () => {
@@ -598,7 +599,9 @@ const processQueue = async () => {
   processingCancelled = false;
 
   try {
-    console.log(`🚀 Starting queue processing (${fileQueue.length} files)`);
+    console.log(
+      `🚀 Starting CONCURRENT queue processing (${fileQueue.length} files, ${CONCURRENT_FILES} at a time)`
+    );
 
     // RECOVERY: Reset any files stuck in "processing" state from previous crash/error
     const stuckFiles = fileQueue.filter((f) => f.status === "processing");
@@ -620,26 +623,51 @@ const processQueue = async () => {
       return { processed: 0 };
     }
 
-    for (const queueItem of pendingFiles) {
+    // Process files in concurrent batches for SPEED
+    let totalProcessed = 0;
+    for (let i = 0; i < pendingFiles.length; i += CONCURRENT_FILES) {
       if (processingCancelled) {
         console.log("⛔ Queue processing cancelled");
         break;
       }
 
-      await processSingleFile(queueItem);
+      const batch = pendingFiles.slice(i, i + CONCURRENT_FILES);
+      const batchNum = Math.floor(i / CONCURRENT_FILES) + 1;
+      const totalBatches = Math.ceil(pendingFiles.length / CONCURRENT_FILES);
 
-      // Delay before next file (unless it's the last one)
+      console.log(
+        `\n📦 Batch ${batchNum}/${totalBatches}: Processing ${batch.length} files CONCURRENTLY...`
+      );
+      console.log(`   Files: ${batch.map((f) => f.filename).join(", ")}`);
+
+      // Process entire batch in parallel - ALL files run simultaneously
+      const batchStart = Date.now();
+      await Promise.all(batch.map((item) => processSingleFile(item)));
+      const batchTime = Date.now() - batchStart;
+
+      totalProcessed += batch.length;
+      console.log(
+        `✅ Batch ${batchNum} complete in ${(batchTime / 1000).toFixed(1)}s`
+      );
+
+      // Short delay between batches (not between individual files)
       const remainingPending = fileQueue.filter(
         (f) => f.status === "pending"
       ).length;
       if (remainingPending > 0) {
-        console.log(`⏸️  Cooling down for ${PROCESSING_DELAY / 1000}s...`);
+        console.log(
+          `⏸️  Cooling down for ${
+            PROCESSING_DELAY / 1000
+          }s before next batch...`
+        );
         await new Promise((resolve) => setTimeout(resolve, PROCESSING_DELAY));
       }
     }
 
-    console.log("🏁 Queue processing complete");
-    return { processed: pendingFiles.length };
+    console.log(
+      `🏁 Queue processing complete - ${totalProcessed} files processed`
+    );
+    return { processed: totalProcessed };
   } catch (error) {
     console.error("❌ Critical error in processQueue:", error.message);
     console.error("   Stack trace:", error.stack);
