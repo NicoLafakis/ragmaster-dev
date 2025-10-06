@@ -5,6 +5,7 @@ const App = () => {
   const [files, setFiles] = useState([]);
   const [queueData, setQueueData] = useState(null);
   const [error, setError] = useState(null);
+  const [warning, setWarning] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const pollIntervalRef = useRef(null);
@@ -76,6 +77,7 @@ const App = () => {
     if (files.length === 0) return;
 
     setError(null);
+    setWarning(null);
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
 
@@ -117,8 +119,22 @@ const App = () => {
 
       console.log("✅ Upload successful:", data);
 
-      if (data.errors) {
-        setError(`Some files skipped: ${data.errors.join(", ")}`);
+      // New structured response handling
+      if (Array.isArray(data.skipped) && data.skipped.length) {
+        if (data.added > 0) {
+          setWarning(
+            `Some files skipped: ` +
+              data.skipped.map((s) => `${s.filename} (${s.reason})`).join(", ")
+          );
+        } else {
+          setError(
+            `All files skipped: ` +
+              data.skipped.map((s) => `${s.filename} (${s.reason})`).join(", ")
+          );
+        }
+      } else if (data.errors && data.errors.length) {
+        // Backward compatibility: legacy 'errors' array
+        setWarning(`Some files skipped: ${data.errors.join(", ")}`);
       }
 
       setFiles([]);
@@ -128,6 +144,7 @@ const App = () => {
     } catch (err) {
       console.error("❌ Upload error:", err);
       setError(err.message);
+      setWarning(null);
     }
   };
   const handleProcessQueue = async () => {
@@ -491,8 +508,8 @@ const App = () => {
         )}
 
         {/* Errors */}
-        {error && (
-          <div className="error-box">
+        {(error || warning) && (
+          <div className={error ? "error-box" : "warning-box"}>
             <pre
               style={{
                 whiteSpace: "pre-wrap",
@@ -501,7 +518,7 @@ const App = () => {
                 fontSize: "12px",
               }}
             >
-              ❌ {error}
+              {error ? `❌ ${error}` : `⚠️ ${warning}`}
             </pre>
           </div>
         )}

@@ -107,6 +107,48 @@ const UNCERTAINTY_LIMITS = {
   classifierProbMin: 0.75,
 };
 
+// ================== OpenAI Instrumentation ================================
+const openaiMetrics = {
+  totalCalls: 0,
+  byModel: {},
+  lastCallAt: null,
+  recent: [], // last 20 calls metadata
+};
+
+async function callChat(model, messages, options = {}) {
+  const started = Date.now();
+  try {
+    const resp = await openai.chat.completions.create({
+      model,
+      messages,
+      ...options,
+    });
+    openaiMetrics.totalCalls++;
+    openaiMetrics.byModel[model] = (openaiMetrics.byModel[model] || 0) + 1;
+    openaiMetrics.lastCallAt = new Date().toISOString();
+    openaiMetrics.recent.unshift({
+      model,
+      ms: Date.now() - started,
+      ts: openaiMetrics.lastCallAt,
+      usage: resp.usage || null,
+      promptTokens: resp.usage?.prompt_tokens,
+      completionTokens: resp.usage?.completion_tokens,
+    });
+    if (openaiMetrics.recent.length > 20) openaiMetrics.recent.pop();
+    return resp;
+  } catch (err) {
+    openaiMetrics.recent.unshift({
+      model,
+      ms: Date.now() - started,
+      ts: new Date().toISOString(),
+      error: err.message,
+    });
+    if (openaiMetrics.recent.length > 20) openaiMetrics.recent.pop();
+    throw err;
+  }
+}
+// ========================================================================
+
 function predictPassProbability(features) {
   try {
     const {
@@ -301,9 +343,9 @@ source_uri: ${sourceUri}
 **Markdown:**
 ${markdown}`;
   try {
-    const response = await openai.chat.completions.create({
-      model: useModel,
-      messages: [
+    const response = await callChat(
+      useModel,
+      [
         {
           role: "system",
           content:
@@ -311,9 +353,8 @@ ${markdown}`;
         },
         { role: "user", content: prompt },
       ],
-      response_format: { type: "json_object" },
-      temperature: 0.2,
-    });
+      { response_format: { type: "json_object" }, temperature: 0.2 }
+    );
     const content = response.choices[0].message.content;
     const parsed = JSON.parse(content);
     if (!parsed.doc || !parsed.chunks)
@@ -334,14 +375,14 @@ async function _selfEvalRaw(md) {
     0,
     48000
   )}`;
-  const r = await openai.chat.completions.create({
-    model: CHEAP_MODEL,
-    messages: [
+  const r = await callChat(
+    CHEAP_MODEL,
+    [
       { role: "system", content: "JSON only" },
       { role: "user", content: prompt },
     ],
-    temperature: 0.2,
-  });
+    { temperature: 0.2 }
+  );
   return r.choices[0].message.content;
 }
 const _j = (s) => {
@@ -403,9 +444,9 @@ async function escalate(md, metrics) {
     .map((c) => c.id);
   if (!failingIds.length) return { mode: "none", improvedMarkdown: md };
   if (failingIds.length / metrics.perChunk.length > 0.3) {
-    const full = await openai.chat.completions.create({
-      model: FALLBACK_MODEL,
-      messages: [
+    const full = await callChat(
+      FALLBACK_MODEL,
+      [
         { role: "system", content: "Return improved markdown only." },
         {
           role: "user",
@@ -415,8 +456,8 @@ async function escalate(md, metrics) {
           )}`,
         },
       ],
-      temperature: 0.3,
-    });
+      { temperature: 0.3 }
+    );
     return {
       mode: "full",
       improvedMarkdown: full.choices[0].message.content || md,
@@ -426,9 +467,9 @@ async function escalate(md, metrics) {
   for (const c of metrics.perChunk) {
     if (!failingIds.includes(c.id)) continue;
     const span = md.slice(c.start, c.end);
-    const fix = await openai.chat.completions.create({
-      model: FALLBACK_MODEL,
-      messages: [
+    const fix = await callChat(
+      FALLBACK_MODEL,
+      [
         { role: "system", content: "Return improved segment only." },
         {
           role: "user",
@@ -437,8 +478,8 @@ async function escalate(md, metrics) {
           )} while preserving facts.\n---\n${span}`,
         },
       ],
-      temperature: 0.3,
-    });
+      { temperature: 0.3 }
+    );
     const newText = fix.choices[0].message.content || span;
     // naive replace via indices (could drift, acceptable for MVP)
     rebuilt.splice(c.start, c.end - c.start, ...newText.split(""));
@@ -564,26 +605,61 @@ app.post("/api/upload", upload.array("files", MAX_FILES), async (req, res) => {
     const files = req.files || [];
     if (!files.length)
       return res.status(400).json({ error: "No files uploaded" });
-    const currentTotal = fileQueue.reduce((a, f) => a + f.originalSize, 0);
+    const initialTotal = fileQueue.reduce((a, f) => a + f.originalSize, 0);
+    let runningTotal = initialTotal;
     let added = 0;
-    const errors = [];
+    const skipped = [];
     for (const f of files) {
-      if (!ALLOWED_EXTENSIONS.includes(path.extname(f.originalname))) {
-        errors.push(`${f.originalname}: invalid extension`);
+      const ext = path.extname(f.originalname);
+      if (!ALLOWED_EXTENSIONS.includes(ext)) {
+        skipped.push({ filename: f.originalname, reason: "INVALID_EXTENSION" });
         continue;
       }
-      if (currentTotal + f.size > MAX_TOTAL_SIZE) {
-        errors.push(`${f.originalname}: total size limit`);
+      if (f.size > MAX_FILE_SIZE) {
+        skipped.push({ filename: f.originalname, reason: "FILE_SIZE_LIMIT" });
+        continue;
+      }
+      if (runningTotal + f.size > MAX_TOTAL_SIZE) {
+        skipped.push({ filename: f.originalname, reason: "TOTAL_SIZE_LIMIT" });
         continue;
       }
       fileQueue.push(createQueueItem(f, f.buffer));
       added++;
+      runningTotal += f.size;
     }
-    res.json({ success: true, added, queueSize: fileQueue.length, errors });
+    res.json({
+      success: true,
+      added,
+      skipped,
+      queueSize: fileQueue.length,
+      totalBytesBefore: initialTotal,
+      totalBytesAfter: runningTotal,
+      limits: {
+        maxFiles: MAX_FILES,
+        maxTotalBytes: MAX_TOTAL_SIZE,
+        maxFileBytes: MAX_FILE_SIZE,
+      },
+    });
     if (added && !isProcessing) processQueue();
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Lightweight config endpoint for frontend to surface limits
+app.get("/api/config", (req, res) => {
+  res.json({
+    limits: {
+      maxFiles: MAX_FILES,
+      maxTotalBytes: MAX_TOTAL_SIZE,
+      maxFileBytes: MAX_FILE_SIZE,
+      allowedExtensions: ALLOWED_EXTENSIONS,
+    },
+    models: {
+      cheap: CHEAP_MODEL,
+      fallback: FALLBACK_MODEL,
+    },
+  });
 });
 
 app.post("/api/process-queue", async (req, res) => {
@@ -654,6 +730,7 @@ app.get("/api/quality", (req, res) => {
     fallback: 0,
     escalated: 0,
     avgComposite: 0,
+    openaiCalls: openaiMetrics.totalCalls,
   };
   for (const f of completed) {
     if (f.gating) {
@@ -664,6 +741,76 @@ app.get("/api/quality", (req, res) => {
     }
   }
   if (aggregate.total) aggregate.avgComposite /= aggregate.total;
-  res.json({ aggregate });
+  res.json({ aggregate, models: openaiMetrics.byModel });
+});
+
+// Health & debug endpoints
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    port: process.env.PORT || 3000,
+    models: { cheap: CHEAP_MODEL, fallback: FALLBACK_MODEL },
+    openai: {
+      apiKeyPresent: !!process.env.OPENAI_API_KEY,
+      totalCalls: openaiMetrics.totalCalls,
+      lastCallAt: openaiMetrics.lastCallAt,
+    },
+  });
+});
+
+app.post("/api/debug/openai/ping", async (req, res) => {
+  try {
+    const r = await callChat(
+      CHEAP_MODEL,
+      [
+        { role: "system", content: 'Return a JSON {"pong":true}' },
+        { role: "user", content: "ping" },
+      ],
+      { temperature: 0, response_format: { type: "json_object" } }
+    );
+    res.json({
+      success: true,
+      content: r.choices[0].message.content,
+      usage: r.usage,
+      metrics: openaiMetrics,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, metrics: openaiMetrics });
+  }
+});
+
+// Debug endpoint: simulate a full conversion using same prompt path
+app.post("/api/debug/openai/convert", express.json(), async (req, res) => {
+  const { markdown, model } = req.body || {};
+  const chosen = model === "fallback" ? FALLBACK_MODEL : CHEAP_MODEL;
+  const sampleMd =
+    markdown ||
+    `# Debug Sample Document\n\nThis is a *small* sample document used for a debug conversion test.\n\n## Section One\nSome introductory text.\n\n### Sub A\nBullet list:\n- Alpha\n- Beta\n- Gamma\n\n## Section Two\nA paragraph with **bold** text and a table.\n\n| Col | Val |\n| --- | --- |\n| A   |  1  |\n| B   |  2  |\n\nThat's all.`;
+  const started = Date.now();
+  try {
+    const docId = `debug_${Date.now().toString(36)}`;
+    const result = await processDocumentWithLLM(
+      sampleMd,
+      docId,
+      "debug.md",
+      chosen
+    );
+    const durationMs = Date.now() - started;
+    res.json({
+      success: true,
+      durationMs,
+      modelUsed: result._model_used,
+      docKeys: Object.keys(result || {}),
+      chunkCount: (result.chunks || []).length,
+      title: result.doc?.title,
+      sampleChunk: result.chunks ? result.chunks[0] : null,
+      metrics: openaiMetrics,
+      truncatedJSON: JSON.stringify(result).slice(0, 1500),
+    });
+  } catch (e) {
+    res
+      .status(500)
+      .json({ success: false, error: e.message, metrics: openaiMetrics });
+  }
 });
 // ================== End API Endpoints ======================================
