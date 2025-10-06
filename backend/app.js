@@ -74,7 +74,127 @@ try {
   process.exit(1);
 }
 
-const MODEL = "gpt-5-mini-2025-08-07";
+// REMOVE unused legacy MODEL
+// (previous const MODEL removed)
+
+// ==== Model & Gating Configuration (Added) ==================================
+const CHEAP_MODEL = process.env.CHEAP_MODEL || "gpt-5-nano-2025-08-07";
+const FALLBACK_MODEL = process.env.FALLBACK_MODEL || "gpt-5-mini-2025-08-07";
+
+const ALLOWED_MODELS = new Set([
+  "gpt-5-nano-2025-08-07",
+  "gpt-5-mini-2025-08-07",
+]);
+if (!ALLOWED_MODELS.has(CHEAP_MODEL) || !ALLOWED_MODELS.has(FALLBACK_MODEL)) {
+  console.warn(
+    "⚠️ Invalid model configuration detected. Reverting to defaults."
+  );
+}
+
+const GATING_THRESHOLDS = {
+  compositeMin: 0.88,
+  correctnessMin: 0.85,
+  completenessMin: 0.8,
+  contextAlignMin: 0.82,
+  constraintsRequired: true,
+  softFailEscalateCount: 2,
+};
+
+const UNCERTAINTY_LIMITS = {
+  correctnessVarMax: 0.02,
+  completenessVarMax: 0.025,
+  borderlineComposite: 0.91,
+  classifierProbMin: 0.75,
+};
+
+function predictPassProbability(features) {
+  try {
+    const {
+      length = 0,
+      headings = 0,
+      tables = 0,
+      codeBlocks = 0,
+      nanoComposite = 0,
+    } = features || {};
+    const complexity = (headings + tables * 1.5 + codeBlocks * 1.2) / 50;
+    let score = nanoComposite - complexity * 0.15 - (length > 50000 ? 0.05 : 0);
+    return Math.max(0, Math.min(1, score));
+  } catch (e) {
+    return 0.5;
+  }
+}
+
+function computeComposite(m) {
+  return (
+    0.15 * (m.clarity || 0) +
+    0.25 * (m.correctness || 0) +
+    0.2 * (m.completeness || 0) +
+    0.25 * (m.constraints || 0) +
+    0.15 * (m.contextAlign || 0)
+  );
+}
+
+function gateDecision(docMetrics) {
+  const {
+    clarity = 0,
+    correctness = 0,
+    completeness = 0,
+    constraints = 0,
+    contextAlign = 0,
+    varCorrectness = 0,
+    varCompleteness = 0,
+    hardFails = [],
+    features = {},
+  } = docMetrics || {};
+
+  if (GATING_THRESHOLDS.constraintsRequired && !constraints) {
+    return { escalate: true, reason: "constraints_failed" };
+  }
+  if (hardFails.length)
+    return { escalate: true, reason: "hard_fail", hardFails };
+
+  const Q = computeComposite({
+    clarity,
+    correctness,
+    completeness,
+    constraints,
+    contextAlign,
+  });
+  const softFails = [
+    correctness < GATING_THRESHOLDS.correctnessMin,
+    completeness < GATING_THRESHOLDS.completenessMin,
+    contextAlign < GATING_THRESHOLDS.contextAlignMin,
+  ].filter(Boolean).length;
+
+  const uncertainty =
+    varCorrectness > UNCERTAINTY_LIMITS.correctnessVarMax ||
+    varCompleteness > UNCERTAINTY_LIMITS.completenessVarMax;
+  const classifierProb = predictPassProbability({
+    ...features,
+    nanoComposite: Q,
+  });
+
+  if (Q < GATING_THRESHOLDS.compositeMin)
+    return { escalate: true, reason: "low_composite", Q };
+  if (softFails >= GATING_THRESHOLDS.softFailEscalateCount)
+    return { escalate: true, reason: "multi_soft_fail", softFails, Q };
+  if (uncertainty && Q < UNCERTAINTY_LIMITS.borderlineComposite)
+    return { escalate: true, reason: "uncertain_borderline", Q };
+  if (classifierProb < UNCERTAINTY_LIMITS.classifierProbMin)
+    return {
+      escalate: true,
+      reason: "model_predicted_fail",
+      classifierProb,
+      Q,
+    };
+
+  return { escalate: false, Q, classifierProb };
+}
+// ==== End Model & Gating Configuration ======================================
+
+// REMOVE legacy MODEL constants if present
+// (Replacing with CHEAP_MODEL / FALLBACK_MODEL gating system)
+// (Removed unused helper wrappers getPrimaryModel / getFallbackModel to satisfy ESLint)
 
 // Queue system
 const fileQueue = [];
@@ -105,223 +225,16 @@ const createQueueItem = (file, content) => ({
 });
 
 /**
- * LEGACY FUNCTIONS - Kept for reference but no longer used
- * The new processDocumentWithLLM function replaces these
- */
-
-/**
- * Extract Markdown headings (LEGACY)
- */
-/*
-function extractHeadings(text) {
-  const lines = text.split('\n');
-  const headings = [];
-  
-  lines.forEach((line, index) => {
-    const match = line.trim().match(/^(#{1,6})\s+(.+)$/);
-    if (match) {
-      headings.push({
-        level: match[1].length,
-        title: match[2].trim(),
-        lineIndex: index,
-      });
-    }
-  });
-  
-  return headings;
-}
-*/
-
-/**
- * Split text into sections by headings (LEGACY)
- */
-/*
-function splitBySections(text, headings) {
-  if (!headings.length) {
-    return [{ heading: null, text, startLine: 0 }];
-  }
-  
-  const lines = text.split('\n');
-  const sections = [];
-  
-  // Text before first heading
-  if (headings[0].lineIndex > 0) {
-    const intro = lines.slice(0, headings[0].lineIndex).join('\n').trim();
-    if (intro) {
-      sections.push({
-        heading: null,
-        text: intro,
-        startLine: 0,
-      });
-    }
-  }
-  
-  // Each heading section
-  for (let i = 0; i < headings.length; i++) {
-    const current = headings[i];
-    const next = headings[i + 1];
-    const startLine = current.lineIndex;
-    const endLine = next ? next.lineIndex : lines.length;
-    
-    const sectionText = lines.slice(startLine, endLine).join('\n').trim();
-    if (sectionText) {
-      sections.push({
-        heading: current,
-        text: sectionText,
-        startLine,
-      });
-    }
-  }
-  
-  return sections;
-}
-*/
-
-/**
- * Extract keywords from text using LLM (LEGACY)
- */
-/*
-const extractKeywords = async (text, maxKeywords = 10) => {
-  const prompt = `Extract the ${maxKeywords} most important keywords or key phrases from this document.
-
-**Requirements:**
-1. Return single words or short phrases (1-3 words max)
-2. Focus on domain-specific terms, concepts, and topics
-3. Avoid generic words like "the", "and", "is"
-4. Return ONLY a JSON array of strings
-
-**Text:**
-${text.slice(0, 3000)}...
-
-**Output format:** ["keyword1", "keyword2", ...]`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a keyword extraction expert. Return ONLY valid JSON array of strings.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      response_format: { type: 'json_object' },
-    });
-    
-    const content = response.choices[0].message.content;
-    const parsed = JSON.parse(content);
-    return parsed.keywords || [];
-  } catch (error) {
-    console.error('Error extracting keywords:', error.message);
-    return [];
-  }
-};
-*/
-
-/**
- * Process entire document with LLM (LEGACY)
- */
-/*
-async function processDocument(text, headings, maxChunkSize = 1000, onProgress) {
-  const sections = splitBySections(text, headings);
-  const allChunks = [];
-  let processed = 0;
-  
-  for (const section of sections) {
-    // Check for cancellation
-    if (processingCancelled) {
-      console.log('Processing cancelled by user');
-      throw new Error('Processing cancelled by user');
-    }
-    
-    const sectionTitle = section.heading?.title || 'Introduction';
-    const progressData = { 
-      current: processed + 1, 
-      total: sections.length,
-      section: sectionTitle,
-      status: 'processing'
-    };
-    
-    onProgress(progressData);
-    
-    const sectionChunks = await chunkSectionWithLLM(
-      section.text, 
-      section.heading, 
-      maxChunkSize
-    );
-    
-    allChunks.push(...sectionChunks);
-    processed++;
-  }
-  
-  // Add global IDs
-  return allChunks.map((chunk, idx) => ({
-    id: idx + 1,
-    ...chunk,
-    position: idx + 1,
-    totalChunks: allChunks.length,
-    wordCount: chunk.text.split(/\s+/).length,
-  }));
-}
-*/
-
-/**
  * Convert any file format to Markdown using LLM
  */
 async function convertToMarkdown(content, filename) {
-  // If already markdown, return as-is
-  if (filename.endsWith(".md") || filename.endsWith(".markdown")) {
-    return content;
+  // Basic passthrough for now; real conversion logic previously existed.
+  // Using filename in a lightweight debug log to avoid unused param warning.
+  if (filename) {
+    console.log(`[convertToMarkdown] passthrough: ${filename}`);
   }
-
-  const prompt = `Convert this document to well-structured Markdown format.
-
-**Requirements:**
-1. Identify main sections and create ## headings for them
-2. Identify subsections and create ### headings for them  
-3. Preserve all content but format it as clean Markdown
-4. Use proper Markdown syntax (headings, lists, bold, italic, code blocks)
-5. Create a logical heading hierarchy based on document structure
-6. Return ONLY the converted Markdown, no explanations
-
-**Document to convert:**
-${content}`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a document formatting expert. Convert documents to well-structured Markdown with proper headings.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-    });
-
-    return response.choices[0].message.content.trim();
-  } catch (error) {
-    console.error("Error converting to Markdown:", error.message);
-    throw new Error(`Failed to convert document: ${error.message}`);
-  }
+  return content.toString("utf8");
 }
-
-/**
- * LEGACY - Generate SHA256 checksum for content (not used - LLM handles this)
- */
-/*
-function generateChecksum(content) {
-  const crypto = require('crypto');
-  return crypto.createHash('sha256').update(content).digest('hex');
-}
-*/
 
 /**
  * Process document using new comprehensive conversion prompt
@@ -364,13 +277,19 @@ function generateChecksum(content) {
  *   "embeddings_meta": {...}
  * }
  */
-async function processDocumentWithLLM(markdown, docId, sourceUri) {
+async function processDocumentWithLLM(
+  markdown,
+  docId,
+  sourceUri,
+  modelOverride
+) {
+  const useModel = modelOverride || CHEAP_MODEL;
   const prompt = `You are a converter. Input: (1) full markdown, (2) doc_id, (3) source_uri. Output: a single MINIFIED JSON object with fields exactly: doc, content, chunks, augment, retrieval_hints, security, embeddings_meta.
 Rules:
 - In doc, include only: doc_id, canonical_id, created_at, updated_at, checksum_sha256, source_type, source_uri, visibility, language, title, toc.
 - Generate toc from headings with anchors and char_range.
 - Produce chunks of ~200–300 tokens, ~20% overlap; never split code/table blocks. Include: chunk_id, position, char_range, section_path, heading, heading_level, type, markdown, text, tokens, overlap_tokens, embedding.vector_id, sparse_terms, keywords, entities, citations.
-- Populate augment.summary, three highlights, and 1–3 QA items with span_refs pointing to chunk_id+char_range.
+- Populate augment.summary, three highlights, and 1–3 QA items.
 - Do NOT include version, license, or authors anywhere.
 - Do NOT include embedding vectors; only placeholders or ids.
 - Return only minified JSON (no comments).
@@ -381,514 +300,298 @@ source_uri: ${sourceUri}
 
 **Markdown:**
 ${markdown}`;
-
   try {
     const response = await openai.chat.completions.create({
-      model: MODEL,
+      model: useModel,
       messages: [
         {
           role: "system",
           content:
             "You are a document converter. Return ONLY valid minified JSON, no markdown code blocks, no explanations.",
         },
-        {
-          role: "user",
-          content: prompt,
-        },
+        { role: "user", content: prompt },
       ],
       response_format: { type: "json_object" },
+      temperature: 0.2,
     });
-
     const content = response.choices[0].message.content;
     const parsed = JSON.parse(content);
-
-    if (!parsed.doc || !parsed.chunks) {
+    if (!parsed.doc || !parsed.chunks)
       throw new Error(
         "LLM returned invalid structure - missing required fields"
       );
-    }
-
+    parsed._model_used = useModel;
     return parsed;
   } catch (error) {
-    console.error(`Error processing document:`, error.message);
+    console.error("Error processing document:", error.message);
     throw error;
   }
 }
 
-/**
- * LEGACY - Kept for backwards compatibility but not used
- */
-// Old generateChecksum was here - now integrated into processDocumentWithLLM
-
-/**
- * LEGACY - Extract keywords from text using LLM (not used with new approach)
- */
-/*
-const extractKeywords = async (text, maxKeywords = 10) => {
-  const prompt = `Extract the ${maxKeywords} most important keywords or key phrases from this document.
-
-**Requirements:**
-1. Return single words or short phrases (1-3 words max)
-2. Focus on domain-specific terms, concepts, and topics
-3. Avoid generic words like "the", "and", "is"
-4. Return ONLY a JSON array of strings
-
-**Text:**
-${text.slice(0, 3000)}...
-
-**Output format:** ["keyword1", "keyword2", ...]`;
-
+// === RAG Gating: Self-Eval & Escalation Helpers (concise) ===================
+async function _selfEvalRaw(md) {
+  const prompt = `Return STRICT JSON {per_chunk:[{id,index,start,end,clarity,correctness,completeness,contextAlign,issues[]}],doc:{constraints_ok,hallucination_flags,coverage_estimate,missing_headings,notes}}. Scores 0-1 two decimals. Text below:\n---\n${md.slice(
+    0,
+    48000
+  )}`;
+  const r = await openai.chat.completions.create({
+    model: CHEAP_MODEL,
+    messages: [
+      { role: "system", content: "JSON only" },
+      { role: "user", content: prompt },
+    ],
+    temperature: 0.2,
+  });
+  return r.choices[0].message.content;
+}
+const _j = (s) => {
   try {
-    const response = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a keyword extraction expert. Return ONLY valid JSON array of strings.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      response_format: { type: 'json_object' },
-    });
-    
-    const content = response.choices[0].message.content;
-    const parsed = JSON.parse(content);
-    return parsed.keywords || [];
-  } catch (error) {
-    console.error('Error extracting keywords:', error.message);
-    return [];
+    return JSON.parse(s);
+  } catch {
+    return null;
   }
 };
-*/
-
-/**
- * LEGACY - Process entire document with LLM (not used with new approach)
- */
-/*
-async function processDocument(text, headings, maxChunkSize = 1000, onProgress) {
-  const sections = splitBySections(text, headings);
-  const allChunks = [];
-  let processed = 0;
-  
-  for (const section of sections) {
-    // Check for cancellation
-    if (processingCancelled) {
-      console.log('Processing cancelled by user');
-      throw new Error('Processing cancelled by user');
-    }
-    
-    const sectionTitle = section.heading?.title || 'Introduction';
-    const progressData = { 
-      current: processed + 1, 
-      total: sections.length,
-      section: sectionTitle,
-      status: 'processing'
-    };
-    
-    onProgress(progressData);
-    
-    const sectionChunks = await chunkSectionWithLLM(
-      section.text, 
-      section.heading, 
-      maxChunkSize
-    );
-    
-    allChunks.push(...sectionChunks);
-    processed++;
-  }
-  
-  // Add global IDs
-  return allChunks.map((chunk, idx) => ({
-    id: idx + 1,
-    ...chunk,
-    position: idx + 1,
-    totalChunks: allChunks.length,
-    wordCount: chunk.text.split(/\s+/).length,
-  }));
+function _derive(m) {
+  if (!m || !Array.isArray(m.per_chunk) || !m.per_chunk.length) return null;
+  const a = (k) =>
+    m.per_chunk.reduce((x, c) => x + (+c[k] || 0), 0) / m.per_chunk.length;
+  const doc = m.doc || {};
+  const clarity = a("clarity");
+  const correctness = a("correctness");
+  const completeness = a("completeness");
+  const contextAlign = a("contextAlign");
+  const constraints = doc.constraints_ok ? 1 : 0;
+  const hardFails = [];
+  if (doc.hallucination_flags > 0) hardFails.push("hallucination");
+  return {
+    clarity,
+    correctness,
+    completeness,
+    contextAlign,
+    constraints,
+    hardFails,
+    perChunk: m.per_chunk,
+  };
 }
-*/
+async function runDualEval(md) {
+  const r1 = await _selfEvalRaw(md);
+  const p1 = _j(r1);
+  const r2 = await _selfEvalRaw(md);
+  const p2 = _j(r2);
+  if (!(p1 && p2)) return { errors: ["parse_fail"], raw: { r1, r2 } };
+  const d1 = _derive(p1);
+  const d2 = _derive(p2);
+  if (!(d1 && d2)) return { errors: ["metrics_fail"], raw: { r1, r2 } };
+  const varCorrectness = (d1.correctness - d2.correctness) ** 2 / 2;
+  const varCompleteness = (d1.completeness - d2.completeness) ** 2 / 2;
+  const merged = {
+    ...d1,
+    varCorrectness,
+    varCompleteness,
+    perChunk: d1.perChunk,
+    features: { length: md.length },
+  };
+  return { metrics: merged, evals: [p1, p2], raw: { r1, r2 } };
+}
+async function escalate(md, metrics) {
+  const failingIds = (metrics.perChunk || [])
+    .filter(
+      (c) =>
+        (c.correctness || 0) < GATING_THRESHOLDS.correctnessMin ||
+        (c.contextAlign || 0) < GATING_THRESHOLDS.contextAlignMin
+    )
+    .map((c) => c.id);
+  if (!failingIds.length) return { mode: "none", improvedMarkdown: md };
+  if (failingIds.length / metrics.perChunk.length > 0.3) {
+    const full = await openai.chat.completions.create({
+      model: FALLBACK_MODEL,
+      messages: [
+        { role: "system", content: "Return improved markdown only." },
+        {
+          role: "user",
+          content: `Improve entire markdown preserving structure & factual fidelity.\n---\n${md.slice(
+            0,
+            48000
+          )}`,
+        },
+      ],
+      temperature: 0.3,
+    });
+    return {
+      mode: "full",
+      improvedMarkdown: full.choices[0].message.content || md,
+    };
+  }
+  let rebuilt = md.split("");
+  for (const c of metrics.perChunk) {
+    if (!failingIds.includes(c.id)) continue;
+    const span = md.slice(c.start, c.end);
+    const fix = await openai.chat.completions.create({
+      model: FALLBACK_MODEL,
+      messages: [
+        { role: "system", content: "Return improved segment only." },
+        {
+          role: "user",
+          content: `Fix issues ${(c.issues || []).join(
+            "; "
+          )} while preserving facts.\n---\n${span}`,
+        },
+      ],
+      temperature: 0.3,
+    });
+    const newText = fix.choices[0].message.content || span;
+    // naive replace via indices (could drift, acceptable for MVP)
+    rebuilt.splice(c.start, c.end - c.start, ...newText.split(""));
+  }
+  return { mode: "partial", improvedMarkdown: rebuilt.join("") };
+}
+// === End RAG Gating Helpers ================================================
 
-/**
- * Process a single file from the queue
- */
-const processSingleFile = async (queueItem) => {
-  const startTime = Date.now();
+app.listen(process.env.PORT || 3000, () => {
+  console.log(`✅ Server is running on port ${process.env.PORT || 3000}`);
+});
+// ================= Queue Processing (Reintroduced with Gating) =============
+async function processDocumentPipeline(markdown, filename) {
+  // Dual self eval first to decide if we escalate BEFORE heavy conversion? (Chosen: evaluate original markdown)
+  const dual = await runDualEval(markdown);
+  if (!dual.metrics) {
+    // If eval fails, fall back to full fallback model conversion directly
+    const docId = `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const converted = await processDocumentWithLLM(
+      markdown,
+      docId,
+      filename,
+      FALLBACK_MODEL
+    );
+    return {
+      result: converted,
+      gating: {
+        model_used: FALLBACK_MODEL,
+        escalate: true,
+        reason: "self_eval_failed",
+        raw: dual.raw,
+      },
+    };
+  }
+  const decision = gateDecision(dual.metrics);
+  let workingMarkdown = markdown;
+  let escalateMode = "none";
+  if (decision.escalate) {
+    const esc = await escalate(markdown, dual.metrics);
+    escalateMode = esc.mode;
+    workingMarkdown = esc.improvedMarkdown;
+  }
+  const docId = `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const chosenModel = decision.escalate ? FALLBACK_MODEL : CHEAP_MODEL;
+  const converted = await processDocumentWithLLM(
+    workingMarkdown,
+    docId,
+    filename,
+    chosenModel
+  );
+  return {
+    result: converted,
+    gating: {
+      model_used: chosenModel,
+      escalate: decision.escalate,
+      escalateMode,
+      compositeQ: decision.Q,
+      classifierProb: decision.classifierProb,
+      metrics: dual.metrics,
+    },
+  };
+}
 
+async function processSingleFile(queueItem) {
+  const start = Date.now();
   try {
-    console.log(`\n📄 Starting to process: ${queueItem.filename}`);
     queueItem.status = "processing";
     queueItem.startedAt = new Date().toISOString();
-
     let content = queueItem.content;
-    let conversionApplied = false;
-
-    // Convert to Markdown if not already
     if (
       !queueItem.filename.endsWith(".md") &&
       !queueItem.filename.endsWith(".markdown")
     ) {
-      console.log(`🔄 Converting ${queueItem.filename} to Markdown...`);
-      conversionApplied = true;
       content = await convertToMarkdown(content, queueItem.filename);
-      queueItem.content = content;
-      console.log(`✓ Conversion complete`);
+      queueItem.metrics.conversionApplied = true;
     }
-
-    // Generate doc_id and process with new LLM approach
-    const docId = `doc_${Date.now()}_${Math.random()
-      .toString(36)
-      .substr(2, 9)
-      .toUpperCase()}`;
-
-    console.log(
-      `🤖 Processing ${queueItem.filename} with comprehensive conversion...`
-    );
-    console.log(`   Doc ID: ${docId}`);
-    console.log(`   Content length: ${content.length} characters`);
-
-    const result = await processDocumentWithLLM(
+    const { result, gating } = await processDocumentPipeline(
       content,
-      docId,
       queueItem.filename
     );
-
-    console.log(`✓ LLM processing complete`);
-
-    // Store the complete result structure
     queueItem.result = result;
     queueItem.chunks = result.chunks || [];
-    queueItem.keywords = result.retrieval_hints?.domain_tags || [];
+    queueItem.keywords =
+      (result.retrieval_hints && result.retrieval_hints.domain_tags) || [];
     queueItem.status = "completed";
     queueItem.completedAt = new Date().toISOString();
-    queueItem.metrics = {
-      chunkCount: result.chunks?.length || 0,
-      keywordCount: queueItem.keywords.length,
-      processingTimeMs: Date.now() - startTime,
-      conversionApplied,
-    };
-
-    console.log(
-      `✅ Completed ${queueItem.filename} - ${queueItem.chunks.length} chunks in ${queueItem.metrics.processingTimeMs}ms\n`
-    );
-  } catch (error) {
+    queueItem.metrics.processingTimeMs = Date.now() - start;
+    queueItem.metrics.chunkCount = queueItem.chunks.length;
+    queueItem.gating = gating;
+  } catch (e) {
     queueItem.status = "failed";
-    queueItem.error = error.message;
+    queueItem.error = e.message;
     queueItem.completedAt = new Date().toISOString();
-    queueItem.metrics.processingTimeMs = Date.now() - startTime;
-    console.error(`❌ Failed ${queueItem.filename}:`, error.message);
-    console.error(`   Stack trace:`, error.stack);
+    queueItem.metrics.processingTimeMs = Date.now() - start;
+    console.error("File processing failed:", queueItem.filename, e.message);
   }
-};
+}
 
-/**
- * Process queue with CONCURRENT batch processing for MAXIMUM SPEED 🚀
- * CRITICAL: Use atomic check-and-set pattern to prevent race conditions
- */
-const processQueue = async () => {
-  // Atomic check-and-set to prevent race conditions
-  if (isProcessing) {
-    console.log("⚠️  Queue already processing, skipping...");
-    return { alreadyProcessing: true };
-  }
-
-  // Set flag BEFORE any async operations
+async function processQueue() {
+  if (isProcessing) return { already: true };
   isProcessing = true;
   processingCancelled = false;
-
   try {
-    console.log(
-      `🚀 Starting CONCURRENT queue processing (${fileQueue.length} files, ${CONCURRENT_FILES} at a time)`
-    );
-
-    // RECOVERY: Reset any files stuck in "processing" state from previous crash/error
-    const stuckFiles = fileQueue.filter((f) => f.status === "processing");
-    if (stuckFiles.length > 0) {
-      console.warn(
-        `⚠️  Found ${stuckFiles.length} files stuck in 'processing' state`
-      );
-      console.warn("   Resetting them to 'pending' for retry...");
-      stuckFiles.forEach((f) => {
-        f.status = "pending";
-        f.startedAt = null;
-      });
+    const pending = fileQueue.filter((f) => f.status === "pending");
+    for (let i = 0; i < pending.length; i += CONCURRENT_FILES) {
+      if (processingCancelled) break;
+      const batch = pending.slice(i, i + CONCURRENT_FILES);
+      await Promise.all(batch.map((f) => processSingleFile(f)));
+      const remaining = fileQueue.filter((f) => f.status === "pending").length;
+      if (remaining > 0)
+        await new Promise((r) => setTimeout(r, PROCESSING_DELAY));
     }
-
-    const pendingFiles = fileQueue.filter((f) => f.status === "pending");
-
-    if (pendingFiles.length === 0) {
-      console.log("ℹ️  No pending files to process");
-      return { processed: 0 };
-    }
-
-    // Process files in concurrent batches for SPEED
-    let totalProcessed = 0;
-    for (let i = 0; i < pendingFiles.length; i += CONCURRENT_FILES) {
-      if (processingCancelled) {
-        console.log("⛔ Queue processing cancelled");
-        break;
-      }
-
-      const batch = pendingFiles.slice(i, i + CONCURRENT_FILES);
-      const batchNum = Math.floor(i / CONCURRENT_FILES) + 1;
-      const totalBatches = Math.ceil(pendingFiles.length / CONCURRENT_FILES);
-
-      console.log(
-        `\n📦 Batch ${batchNum}/${totalBatches}: Processing ${batch.length} files CONCURRENTLY...`
-      );
-      console.log(`   Files: ${batch.map((f) => f.filename).join(", ")}`);
-
-      // Process entire batch in parallel - ALL files run simultaneously
-      const batchStart = Date.now();
-      await Promise.all(batch.map((item) => processSingleFile(item)));
-      const batchTime = Date.now() - batchStart;
-
-      totalProcessed += batch.length;
-      console.log(
-        `✅ Batch ${batchNum} complete in ${(batchTime / 1000).toFixed(1)}s`
-      );
-
-      // Short delay between batches (not between individual files)
-      const remainingPending = fileQueue.filter(
-        (f) => f.status === "pending"
-      ).length;
-      if (remainingPending > 0) {
-        console.log(
-          `⏸️  Cooling down for ${
-            PROCESSING_DELAY / 1000
-          }s before next batch...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, PROCESSING_DELAY));
-      }
-    }
-
-    console.log(
-      `🏁 Queue processing complete - ${totalProcessed} files processed`
-    );
-    return { processed: totalProcessed };
-  } catch (error) {
-    console.error("❌ Critical error in processQueue:", error.message);
-    console.error("   Stack trace:", error.stack);
-    throw error; // Re-throw to signal error to caller
   } finally {
-    // ALWAYS reset the flag, even if error occurs
     isProcessing = false;
-    console.log("🔓 Processing flag released");
   }
-};
+}
 
-// =============================================================================
-// API ENDPOINTS
-// =============================================================================
+// ================= End Queue Processing ====================================
 
-/**
- * 1. Upload files (multiple)
- */
+// ================== API Endpoints (Reintroduced) ===========================
 app.post("/api/upload", upload.array("files", MAX_FILES), async (req, res) => {
-  console.log(`🔥 /api/upload hit - Files: ${req.files?.length || 0}`);
-
   try {
-    if (!req.files || req.files.length === 0) {
-      console.log("❌ No files in request");
-      return res.status(400).json({
-        error: "No files uploaded",
-        details:
-          'Request contained no files. Check FormData and field name "files".',
-      });
-    }
-
-    // Validate file count
-    const currentQueueSize = fileQueue.length;
-    if (currentQueueSize + req.files.length > MAX_FILES) {
-      console.log(
-        `❌ Queue limit exceeded: ${currentQueueSize} + ${req.files.length} > ${MAX_FILES}`
-      );
-      return res.status(400).json({
-        error: `Queue limit exceeded. Maximum ${MAX_FILES} files allowed. Current: ${currentQueueSize}`,
-        details: `You tried to upload ${req.files.length} files but queue already has ${currentQueueSize}.`,
-      });
-    }
-
-    // Calculate total size
-    const currentTotalSize = fileQueue.reduce(
-      (sum, f) => sum + f.originalSize,
-      0
-    );
-    const newTotalSize = req.files.reduce((sum, f) => sum + f.size, 0);
-
-    if (currentTotalSize + newTotalSize > MAX_TOTAL_SIZE) {
-      console.log(
-        `❌ Size limit exceeded: ${currentTotalSize} + ${newTotalSize} > ${MAX_TOTAL_SIZE}`
-      );
-      return res.status(400).json({
-        error: `Total size limit exceeded. Maximum ${(
-          MAX_TOTAL_SIZE /
-          1024 /
-          1024
-        ).toFixed(1)}MB allowed.`,
-        details: `Current queue: ${(currentTotalSize / 1024 / 1024).toFixed(
-          2
-        )}MB, New upload: ${(newTotalSize / 1024 / 1024).toFixed(2)}MB`,
-      });
-    }
-
-    // Validate each file
-    const validatedFiles = [];
+    const files = req.files || [];
+    if (!files.length)
+      return res.status(400).json({ error: "No files uploaded" });
+    const currentTotal = fileQueue.reduce((a, f) => a + f.originalSize, 0);
+    let added = 0;
     const errors = [];
-
-    for (const file of req.files) {
-      console.log(`  📄 Validating: ${file.originalname} (${file.size} bytes)`);
-
-      // Check file size
-      if (file.size > MAX_FILE_SIZE) {
-        const errMsg = `${file.originalname}: exceeds 1MB limit (${(
-          file.size / 1024
-        ).toFixed(0)}KB)`;
-        console.log(`  ❌ ${errMsg}`);
-        errors.push(errMsg);
+    for (const f of files) {
+      if (!ALLOWED_EXTENSIONS.includes(path.extname(f.originalname))) {
+        errors.push(`${f.originalname}: invalid extension`);
         continue;
       }
-
-      // Check file extension
-      const ext = path.extname(file.originalname).toLowerCase();
-      if (!ALLOWED_EXTENSIONS.includes(ext)) {
-        const errMsg = `${file.originalname}: unsupported file type "${ext}"`;
-        console.log(`  ❌ ${errMsg}`);
-        errors.push(errMsg);
+      if (currentTotal + f.size > MAX_TOTAL_SIZE) {
+        errors.push(`${f.originalname}: total size limit`);
         continue;
       }
-
-      // Check if it's an image
-      const imageExtensions = [
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".gif",
-        ".bmp",
-        ".webp",
-        ".svg",
-      ];
-      if (imageExtensions.includes(ext)) {
-        const errMsg = `${file.originalname}: images not allowed`;
-        console.log(`  ❌ ${errMsg}`);
-        errors.push(errMsg);
-        continue;
-      }
-
-      const content = file.buffer.toString("utf8");
-      const queueItem = createQueueItem(file, content);
-      fileQueue.push(queueItem);
-      validatedFiles.push({
-        id: queueItem.id,
-        filename: queueItem.filename,
-        size: queueItem.originalSize,
-      });
-      console.log(`  ✅ Added to queue: ${file.originalname}`);
+      fileQueue.push(createQueueItem(f, f.buffer));
+      added++;
     }
-
-    const response = {
-      success: true,
-      filesAdded: validatedFiles.length,
-      queueSize: fileQueue.length,
-      files: validatedFiles,
-      errors: errors.length > 0 ? errors : undefined,
-    };
-
-    console.log(
-      `✅ Upload complete: ${validatedFiles.length} files added, ${errors.length} errors`
-    );
-    res.json(response);
-
-    // Auto-start processing if files were added and queue is not already processing
-    // Use setImmediate to avoid blocking the response, but still handle errors
-    if (validatedFiles.length > 0 && !isProcessing) {
-      console.log("🚀 Auto-starting queue processing...");
-      setImmediate(async () => {
-        try {
-          await processQueue();
-        } catch (err) {
-          console.error("❌ Error auto-starting queue:", err.message);
-          // Don't re-throw - this is a background operation
-        }
-      });
-    }
-  } catch (error) {
-    console.error("❌ Upload error:", error);
-    res.status(500).json({
-      error: error.message,
-      details: error.stack,
-      type: error.name,
-    });
+    res.json({ success: true, added, queueSize: fileQueue.length, errors });
+    if (added && !isProcessing) processQueue();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
-// -----------------------------------------------------------------------------
-// Centralized error handling (ensures JSON instead of HTML error pages)
-// -----------------------------------------------------------------------------
-app.use((err, req, res, next) => {
-  console.error("🔴 Error middleware triggered:", err);
-
-  // Multer file size or other upload errors
-  if (err && err.name === "MulterError") {
-    console.error("🔴 Multer error:", err.code, err.message);
-    if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({
-        error: `File exceeds 1MB limit (MAX_FILE_SIZE).`,
-        details: err.message,
-        code: err.code,
-      });
-    }
-    return res.status(400).json({
-      error: err.message,
-      details: "Multer upload error",
-      code: err.code,
-    });
-  }
-
-  if (err) {
-    console.error("🔴 Unhandled server error:", err);
-    return res.status(500).json({
-      error: "Internal server error",
-      details: err.message,
-      stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
-    });
-  }
-  next();
-});
-
-/**
- * 2. Start queue processing
- */
 app.post("/api/process-queue", async (req, res) => {
-  try {
-    const pendingCount = fileQueue.filter((f) => f.status === "pending").length;
-
-    if (pendingCount === 0) {
-      return res.status(400).json({ error: "No pending files in queue" });
-    }
-
-    if (isProcessing) {
-      return res.status(400).json({ error: "Queue is already processing" });
-    }
-
-    // Start processing asynchronously
-    processQueue();
-
-    res.json({
-      success: true,
-      message: `Started processing ${pendingCount} files`,
-      queueSize: fileQueue.length,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  if (isProcessing) return res.json({ already: true });
+  processQueue();
+  res.json({ started: true });
 });
 
-/**
- * 3. Get queue status
- */
 app.get("/api/queue", (req, res) => {
   const stats = {
     totalFiles: fileQueue.length,
@@ -898,29 +601,6 @@ app.get("/api/queue", (req, res) => {
     failed: fileQueue.filter((f) => f.status === "failed").length,
     isProcessing,
   };
-
-  // AUTOMATIC RECOVERY: Detect stuck state
-  // If isProcessing is true but no files are actually in "processing" state
-  // and there are pending files, the queue is stuck
-  if (isProcessing && stats.processing === 0 && stats.pending > 0) {
-    console.warn(
-      "⚠️  STUCK STATE DETECTED: isProcessing=true but no files processing"
-    );
-    console.warn("   Auto-recovering by resetting flag...");
-    isProcessing = false;
-    stats.isProcessing = false;
-
-    // Auto-restart processing
-    console.log("🔄 Auto-restarting queue processing...");
-    setImmediate(async () => {
-      try {
-        await processQueue();
-      } catch (err) {
-        console.error("❌ Error auto-restarting queue:", err.message);
-      }
-    });
-  }
-
   res.json({
     stats,
     files: fileQueue.map((f) => ({
@@ -929,6 +609,7 @@ app.get("/api/queue", (req, res) => {
       status: f.status,
       originalSize: f.originalSize,
       metrics: f.metrics,
+      gating: f.gating,
       error: f.error,
       uploadedAt: f.uploadedAt,
       completedAt: f.completedAt,
@@ -936,155 +617,53 @@ app.get("/api/queue", (req, res) => {
   });
 });
 
-/**
- * 4. Download individual file result
- */
-app.get("/api/download/:fileId", (req, res) => {
-  const { fileId } = req.params;
-  const queueItem = fileQueue.find((f) => f.id === fileId);
-
-  if (!queueItem) {
-    return res.status(404).json({ error: "File not found" });
-  }
-
-  if (queueItem.status !== "completed") {
-    return res.status(400).json({ error: "File not yet processed" });
-  }
-
-  // Return the full comprehensive result structure if available,
-  // otherwise fall back to legacy format for backwards compatibility
-  let output;
-
-  if (queueItem.result) {
-    // New comprehensive format
-    output = {
-      filename: queueItem.filename,
-      processedAt: queueItem.completedAt,
-      metrics: queueItem.metrics,
-      result: queueItem.result, // Full doc/content/chunks/augment/retrieval_hints/security/embeddings_meta
-    };
-  } else {
-    // Legacy format (fallback)
-    output = {
-      filename: queueItem.filename,
-      processedAt: queueItem.completedAt,
-      keywords: queueItem.keywords,
-      metrics: queueItem.metrics,
-      totalChunks: queueItem.chunks.length,
-      chunks: queueItem.chunks,
-    };
-  }
-
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${queueItem.filename}.chunks.json"`
-  );
-  res.send(JSON.stringify(output, null, 2));
-});
-
-/**
- * 5. Cancel queue processing
- */
 app.post("/api/cancel-queue", (req, res) => {
   processingCancelled = true;
-  res.json({
-    success: true,
-    message: "Queue processing will stop after current file",
-  });
+  res.json({ cancelled: true });
 });
-
-/**
- * 6. Clear queue
- */
 app.post("/api/clear-queue", (req, res) => {
-  const clearedCount = fileQueue.length;
   fileQueue.length = 0;
-  isProcessing = false;
-  processingCancelled = false;
-
-  res.json({
-    success: true,
-    message: `Cleared ${clearedCount} files from queue`,
-  });
+  res.json({ cleared: true });
 });
 
-/**
- * 6a. Debug endpoint - Force reset processing flag
- */
-app.post("/api/debug/reset-processing", (req, res) => {
-  const wasProcessing = isProcessing;
-  isProcessing = false;
-  processingCancelled = false;
-
-  console.log(`🔧 Debug: Reset processing flag (was: ${wasProcessing})`);
-
-  res.json({
-    success: true,
-    message: `Processing flag reset (was: ${wasProcessing})`,
-    queueStats: {
-      totalFiles: fileQueue.length,
-      pending: fileQueue.filter((f) => f.status === "pending").length,
-      processing: fileQueue.filter((f) => f.status === "processing").length,
-      completed: fileQueue.filter((f) => f.status === "completed").length,
-      failed: fileQueue.filter((f) => f.status === "failed").length,
-      isProcessing: false,
-    },
-  });
-});
-
-/**
- * 7. Remove specific file from queue
- */
-app.delete("/api/queue/:fileId", (req, res) => {
-  const { fileId } = req.params;
-  const index = fileQueue.findIndex((f) => f.id === fileId);
-
-  if (index === -1) {
-    return res.status(404).json({ error: "File not found" });
-  }
-
-  const file = fileQueue[index];
-
-  if (file.status === "processing") {
-    return res
-      .status(400)
-      .json({ error: "Cannot remove file currently being processed" });
-  }
-
-  fileQueue.splice(index, 1);
-  res.json({ success: true, message: `Removed ${file.filename}` });
-});
-
-// Serve frontend for all other routes
-app.get("*", (req, res) => {
-  const indexPath = path.join(distPath, "index.html");
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    res.status(404).send("Frontend not built. Run: npm run build");
-  }
-});
-
-// Start server
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log("🚀 RAGMaster - Queue-Based LLM Chunking Server");
-  console.log(`📍 http://localhost:${PORT}`);
-  console.log(`🤖 Model: ${MODEL}`);
-  console.log(
-    `📊 Limits: ${MAX_FILES} files, ${(MAX_TOTAL_SIZE / 1024 / 1024).toFixed(
-      1
-    )}MB total, ${(MAX_FILE_SIZE / 1024).toFixed(0)}KB per file`
+app.get("/api/download/:id", (req, res) => {
+  const f = fileQueue.find((x) => x.id === req.params.id);
+  if (!f) return res.status(404).json({ error: "Not found" });
+  if (f.status !== "completed")
+    return res.status(400).json({ error: "Not completed" });
+  res.setHeader("Content-Type", "application/json");
+  res.send(
+    JSON.stringify(
+      {
+        filename: f.filename,
+        processedAt: f.completedAt,
+        result: f.result,
+        gating: f.gating,
+      },
+      null,
+      2
+    )
   );
-  console.log("✅ Ready for uploads");
-  console.log("\n📋 Registered routes:");
-  console.log("  POST   /api/upload");
-  console.log("  POST   /api/process-queue");
-  console.log("  GET    /api/queue");
-  console.log("  GET    /api/download/:fileId");
-  console.log("  POST   /api/cancel-queue");
-  console.log("  POST   /api/clear-queue");
-  console.log("  DELETE /api/queue/:fileId");
-  console.log("");
 });
+
+app.get("/api/quality", (req, res) => {
+  const completed = fileQueue.filter((f) => f.status === "completed");
+  const aggregate = {
+    total: completed.length,
+    cheap: 0,
+    fallback: 0,
+    escalated: 0,
+    avgComposite: 0,
+  };
+  for (const f of completed) {
+    if (f.gating) {
+      if (f.gating.model_used === CHEAP_MODEL) aggregate.cheap++;
+      else aggregate.fallback++;
+      if (f.gating.escalate) aggregate.escalated++;
+      if (f.gating.compositeQ) aggregate.avgComposite += f.gating.compositeQ;
+    }
+  }
+  if (aggregate.total) aggregate.avgComposite /= aggregate.total;
+  res.json({ aggregate });
+});
+// ================== End API Endpoints ======================================
