@@ -25,7 +25,7 @@ const CHEAP_MODEL = process.env.CHEAP_MODEL || "gpt-5-nano-2025-08-07";
         { role: "user", content: prompt },
       ],
       response_format: { type: "json_object" },
-      temperature: 0.2,
+      temperature: 0.4,
     });
     const raw = r.choices[0].message.content;
     console.log("✅ Raw response (first 500 chars):");

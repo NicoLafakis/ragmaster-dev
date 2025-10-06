@@ -274,7 +274,7 @@ async function chunkSectionWithLLM(sectionText, heading, maxChunkSize = 1000) {
     model: MODEL,
     messages: [...],
     response_format: { type: 'json_object' },
-    temperature: 0.3,  // Lower = more deterministic
+    temperature: 0.4,  // Lower = more deterministic
   });
 
   // Parse and validate response

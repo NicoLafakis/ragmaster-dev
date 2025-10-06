@@ -120,12 +120,15 @@ async function callChat(model, messages, options = {}) {
   function sanitizeChatOptions(model, opts) {
     const sanitized = { ...opts };
     // If nano model only supports default temperature, drop user-specified temperature
-    if (model.startsWith('gpt-5-nano') && 'temperature' in sanitized) {
+    if (model.startsWith("gpt-5-nano") && "temperature" in sanitized) {
       delete sanitized.temperature;
     }
     // Remove empty objects
     Object.keys(sanitized).forEach((k) => {
-      if (sanitized[k] == null || (typeof sanitized[k] === 'object' && !Object.keys(sanitized[k]).length)) {
+      if (
+        sanitized[k] == null ||
+        (typeof sanitized[k] === "object" && !Object.keys(sanitized[k]).length)
+      ) {
         delete sanitized[k];
       }
     });
@@ -359,14 +362,18 @@ source_uri: ${sourceUri}
 **Markdown:**
 ${markdown}`;
   try {
-    const response = await callChat(useModel, [
-      {
-        role: "system",
-        content:
-          "You are a document converter. Return ONLY valid minified JSON, no markdown code blocks, no explanations.",
-      },
-      { role: "user", content: prompt },
-    ], { response_format: { type: "json_object" }, temperature: 0.2 });
+    const response = await callChat(
+      useModel,
+      [
+        {
+          role: "system",
+          content:
+            "You are a document converter. Return ONLY valid minified JSON, no markdown code blocks, no explanations.",
+        },
+        { role: "user", content: prompt },
+      ],
+      { response_format: { type: "json_object" }, temperature: 0.4 }
+    );
     const content = response.choices[0].message.content;
     const parsed = JSON.parse(content);
     if (!parsed.doc || !parsed.chunks)
@@ -387,10 +394,14 @@ async function _selfEvalRaw(md) {
     0,
     48000
   )}`;
-  const r = await callChat(CHEAP_MODEL, [
-    { role: "system", content: "JSON only" },
-    { role: "user", content: prompt },
-  ], { temperature: 0.2 });
+  const r = await callChat(
+    CHEAP_MODEL,
+    [
+      { role: "system", content: "JSON only" },
+      { role: "user", content: prompt },
+    ],
+    { temperature: 0.4 }
+  );
   return r.choices[0].message.content;
 }
 const _j = (s) => {
@@ -452,13 +463,20 @@ async function escalate(md, metrics) {
     .map((c) => c.id);
   if (!failingIds.length) return { mode: "none", improvedMarkdown: md };
   if (failingIds.length / metrics.perChunk.length > 0.3) {
-    const full = await callChat(FALLBACK_MODEL, [
-      { role: "system", content: "Return improved markdown only." },
-      {
-        role: "user",
-        content: `Improve entire markdown preserving structure & factual fidelity.\n---\n${md.slice(0, 48000)}`,
-      },
-    ], { temperature: 0.3 });
+    const full = await callChat(
+      FALLBACK_MODEL,
+      [
+        { role: "system", content: "Return improved markdown only." },
+        {
+          role: "user",
+          content: `Improve entire markdown preserving structure & factual fidelity.\n---\n${md.slice(
+            0,
+            48000
+          )}`,
+        },
+      ],
+      { temperature: 0.4 }
+    );
     return {
       mode: "full",
       improvedMarkdown: full.choices[0].message.content || md,
@@ -468,13 +486,19 @@ async function escalate(md, metrics) {
   for (const c of metrics.perChunk) {
     if (!failingIds.includes(c.id)) continue;
     const span = md.slice(c.start, c.end);
-    const fix = await callChat(FALLBACK_MODEL, [
-      { role: "system", content: "Return improved segment only." },
-      {
-        role: "user",
-        content: `Fix issues ${(c.issues || []).join("; ")} while preserving facts.\n---\n${span}`,
-      },
-    ], { temperature: 0.3 });
+    const fix = await callChat(
+      FALLBACK_MODEL,
+      [
+        { role: "system", content: "Return improved segment only." },
+        {
+          role: "user",
+          content: `Fix issues ${(c.issues || []).join(
+            "; "
+          )} while preserving facts.\n---\n${span}`,
+        },
+      ],
+      { temperature: 0.4 }
+    );
     const newText = fix.choices[0].message.content || span;
     // naive replace via indices (could drift, acceptable for MVP)
     rebuilt.splice(c.start, c.end - c.start, ...newText.split(""));
@@ -755,10 +779,14 @@ app.get("/api/health", (req, res) => {
 
 app.post("/api/debug/openai/ping", async (req, res) => {
   try {
-    const r = await callChat(CHEAP_MODEL, [
-      { role: "system", content: 'Return a JSON {"pong":true}' },
-      { role: "user", content: "ping" },
-    ], { response_format: { type: "json_object" } });
+    const r = await callChat(
+      CHEAP_MODEL,
+      [
+        { role: "system", content: 'Return a JSON {"pong":true}' },
+        { role: "user", content: "ping" },
+      ],
+      { response_format: { type: "json_object" } }
+    );
     res.json({
       success: true,
       content: r.choices[0].message.content,
